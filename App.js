@@ -1,15 +1,19 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, TouchableOpacity, Image, Alert } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Image, Alert, ScrollView, ActivityIndicator } from 'react-native';
 import { useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
+
+
+const GOOGLE_VISION_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_VISION_API_KEY;
 
 export default function App() {
-  // State per memorizzare l'immagine scattata
   const [image, setImage] = useState(null);
+  const [extractedText, setExtractedText] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Funzione per scattare la foto
   const takePicture = async () => {
-    // 1. Chiedi il permesso per usare la fotocamera
     const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
     
     if (permissionResult.granted === false) {
@@ -17,22 +21,76 @@ export default function App() {
       return;
     }
 
-    // 2. Apri la fotocamera
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: false,
-      quality: 0.8, // Qualità immagine (0-1)
+      quality: 0.8,
+      base64: true, // IMPORTANTE: serve per Google Vision
     });
 
-    // 3. Se l'utente ha scattato una foto (non ha annullato)
     if (!result.canceled) {
       setImage(result.assets[0].uri);
-      console.log('Foto scattata:', result.assets[0].uri);
+      setExtractedText('');
+      recognizeText(result.assets[0].base64);
     }
   };
 
-  // Funzione per resettare (cancellare la foto)
+  // Funzione OCR con Google Cloud Vision
+  const recognizeText = async (base64Image) => {
+    setIsProcessing(true);
+    
+    try {
+      console.log('Invio immagine a Google Vision...');
+      
+      // Chiamata API a Google Cloud Vision
+      const response = await fetch(
+        `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            requests: [
+              {
+                image: {
+                  content: base64Image,
+                },
+                features: [
+                  {
+                    type: 'TEXT_DETECTION',
+                    maxResults: 1,
+                  },
+                ],
+              },
+            ],
+          }),
+        }
+      );
+
+      const result = await response.json();
+      console.log('Risposta Google Vision:', result);
+
+      // Estrae il testo dalla risposta
+      if (result.responses && result.responses[0].textAnnotations) {
+        const text = result.responses[0].textAnnotations[0].description;
+        setExtractedText(text);
+        console.log('Testo estratto:', text);
+      } else {
+        Alert.alert('Nessun testo trovato', 'Prova a scattare una foto più nitida');
+        setExtractedText('Nessun testo riconosciuto');
+      }
+
+    } catch (error) {
+      console.error('Errore OCR:', error);
+      Alert.alert('Errore', 'Impossibile leggere il testo dall\'immagine');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const resetImage = () => {
     setImage(null);
+    setExtractedText('');
   };
 
   return (
@@ -40,10 +98,29 @@ export default function App() {
       <Text style={styles.title}>ReceiptFlow 📸</Text>
       <Text style={styles.subtitle}>Gestisci i tuoi scontrini facilmente</Text>
       
-      {/* Mostra l'immagine SE esiste */}
-      {image ? (
-        <View style={styles.imageContainer}>
+      {!image ? (
+        <TouchableOpacity style={styles.button} onPress={takePicture}>
+          <Text style={styles.buttonText}>📸 Scatta Foto</Text>
+        </TouchableOpacity>
+      ) : (
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
           <Image source={{ uri: image }} style={styles.image} />
+          
+          {isProcessing && (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#007AFF" />
+              <Text style={styles.loadingText}>Sto leggendo lo scontrino...</Text>
+            </View>
+          )}
+          
+          {extractedText !== '' && !isProcessing && (
+            <View style={styles.textContainer}>
+              <Text style={styles.textTitle}>📝 Testo Estratto:</Text>
+              <View style={styles.textBox}>
+                <Text style={styles.extractedText}>{extractedText}</Text>
+              </View>
+            </View>
+          )}
           
           <View style={styles.buttonRow}>
             <TouchableOpacity style={styles.buttonSecondary} onPress={resetImage}>
@@ -54,12 +131,7 @@ export default function App() {
               <Text style={styles.buttonText}>📸 Nuova Foto</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      ) : (
-        // Altrimenti mostra il bottone per scattare
-        <TouchableOpacity style={styles.button} onPress={takePicture}>
-          <Text style={styles.buttonText}>📸 Scatta Foto</Text>
-        </TouchableOpacity>
+        </ScrollView>
       )}
       
       <StatusBar style="auto" />
@@ -71,20 +143,29 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
+    paddingTop: 50,
+    paddingHorizontal: 20,
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 10,
+    textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
     color: '#666',
-    marginBottom: 40,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  scrollView: {
+    flex: 1,
+    width: '100%',
+  },
+  scrollContent: {
+    alignItems: 'center',
+    paddingBottom: 30,
   },
   button: {
     backgroundColor: '#007AFF',
@@ -105,10 +186,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  imageContainer: {
-    width: '100%',
-    alignItems: 'center',
-  },
   image: {
     width: 300,
     height: 400,
@@ -118,5 +195,37 @@ const styles = StyleSheet.create({
   buttonRow: {
     flexDirection: 'row',
     justifyContent: 'center',
+    marginTop: 20,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#666',
+  },
+  textContainer: {
+    width: '100%',
+    marginTop: 10,
+  },
+  textTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  textBox: {
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  extractedText: {
+    fontSize: 14,
+    color: '#333',
+    lineHeight: 20,
   },
 });
