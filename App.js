@@ -5,7 +5,10 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 
 
-const GOOGLE_VISION_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_VISION_API_KEY;
+const GOOGLE_CLOUD_VISION_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_CLOUD_VISION_API_KEY;
+
+
+
 
 export default function App() {
   const [image, setImage] = useState(null);
@@ -38,37 +41,46 @@ export default function App() {
   const recognizeText = async (base64Image) => {
     setIsProcessing(true);
     
-    try {
-      console.log('Invio immagine a Google Vision...');
-      
-      // Chiamata API a Google Cloud Vision
-      const response = await fetch(
-        `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            requests: [
-              {
-                image: {
-                  content: base64Image,
-                },
-                features: [
-                  {
-                    type: 'TEXT_DETECTION',
-                    maxResults: 1,
-                  },
-                ],
-              },
-            ],
-          }),
-        }
-      );
+    console.log('=== DEBUG OCR ===');
+    console.log('1. Funzione recognizeText chiamata');
+    console.log('2. API Key presente:', GOOGLE_CLOUD_VISION_API_KEY ? 'SI' : 'NO');
+    console.log('3. API Key primi caratteri:', GOOGLE_CLOUD_VISION_API_KEY?.substring(0, 10));
+    console.log('4. Immagine base64 ricevuta:', base64Image ? 'SI (lunghezza: ' + base64Image.length + ')' : 'NO');
 
-      const result = await response.json();
-      console.log('Risposta Google Vision:', result);
+
+    try {
+    console.log('5. Invio immagine a Google Vision...');
+    
+    const response = await fetch(
+      `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_CLOUD_VISION_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              image: {
+                content: base64Image,
+              },
+              features: [
+                {
+                  type: 'TEXT_DETECTION',
+                  maxResults: 1,
+                },
+              ],
+            },
+          ],
+        }),
+      }
+    );
+
+    console.log('6. Risposta ricevuta, status:', response.status);
+    const result = await response.json();
+    console.log('7. Risposta Google Vision:', JSON.stringify(result, null, 2));
+
+
 
       // Estrae il testo dalla risposta
       if (result.responses && result.responses[0].textAnnotations) {
