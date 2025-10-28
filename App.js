@@ -1,8 +1,9 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, TouchableOpacity, Image, Alert, ScrollView, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Image, Alert, ScrollView, ActivityIndicator, TextInput } from 'react-native';
 import { useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as Clipboard from 'expo-clipboard';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 
 const GOOGLE_CLOUD_VISION_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_CLOUD_VISION_API_KEY;
@@ -14,6 +15,8 @@ export default function App() {
   const [image, setImage] = useState(null);
   const [extractedText, setExtractedText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [receipts, setReceipts] = useState([]);
+  const [showReceiptsList, setShowReceiptsList] = useState(false); 
 
   // Funzione per scattare la foto
   const takePicture = async () => {
@@ -31,14 +34,15 @@ export default function App() {
     });
 
     if (!result.canceled) {
-      setImage(result.assets[0].uri);
+      const imageUri = result.assets[0].uri;
+      setImage(imageUri);
       setExtractedText('');
-      recognizeText(result.assets[0].base64);
+      recognizeText(result.assets[0].base64, imageUri);
     }
   };
 
   // Funzione OCR con Google Cloud Vision
-  const recognizeText = async (base64Image) => {
+  const recognizeText = async (base64Image, imageUri) => {
     setIsProcessing(true);
     
     console.log('=== DEBUG OCR ===');
@@ -82,14 +86,27 @@ export default function App() {
 
 
 
-      // Estrae il testo dalla risposta
       if (result.responses && result.responses[0].textAnnotations) {
         const text = result.responses[0].textAnnotations[0].description;
         setExtractedText(text);
-        console.log('Testo estratto:', text);
+        console.log("7. Testo estratto:", text);
+
+        // 👇 AGGIUNGI QUESTO: Salva lo scontrino nella lista
+        const newReceipt = {
+          id: Date.now(), // ID univoco basato sul timestamp
+          image: imageUri, // URI dell'immagine
+          text: text, // Testo estratto
+          date: new Date().toLocaleString("it-IT"), // Data e ora
+        };
+
+        setReceipts((prevReceipts) => [...prevReceipts, newReceipt]);
+        console.log("Scontrino salvato! Totale:", receipts.length + 1);
       } else {
-        Alert.alert('Nessun testo trovato', 'Prova a scattare una foto più nitida');
-        setExtractedText('Nessun testo riconosciuto');
+        Alert.alert(
+          "Nessun testo trovato",
+          "Prova a scattare una foto più nitida"
+        );
+        setExtractedText("Nessun testo riconosciuto");
       }
 
     } catch (error) {
@@ -105,50 +122,121 @@ export default function App() {
     setExtractedText('');
   };
 
+  const copyToClipboard = async () => {
+    await Clipboard.setStringAsync(extractedText);
+    Alert.alert('Copiato! ✅', 'Il testo è stato copiato negli appunti');
+  };
+
+
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <Text style={styles.title}>ReceiptFlow 📸</Text>
       <Text style={styles.subtitle}>Gestisci i tuoi scontrini facilmente</Text>
-      
-      {!image ? (
-        <TouchableOpacity style={styles.button} onPress={takePicture}>
-          <Text style={styles.buttonText}>📸 Scatta Foto</Text>
+
+      {receipts.length > 0 && !showReceiptsList && (
+        <TouchableOpacity
+          style={styles.viewAllButton}
+          onPress={() => setShowReceiptsList(true)}
+        >
+          <Text style={styles.viewAllButtonText}>
+            📋 Vedi Tutti ({receipts.length})
+          </Text>
         </TouchableOpacity>
-      ) : (
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-          <Image source={{ uri: image }} style={styles.image} />
-          
-          {isProcessing && (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#007AFF" />
-              <Text style={styles.loadingText}>Sto leggendo lo scontrino...</Text>
+      )}
+
+       {/* SCHERMATA: Lista Scontrini */}
+    {showReceiptsList ? (
+      <View style={styles.listContainer}>
+        <ScrollView style={styles.scrollView}>
+          {receipts.map((receipt, index) => (
+            <View key={receipt.id} style={styles.receiptCard}>
+              <Text style={styles.receiptNumber}>Scontrino #{index + 1}</Text>
+              <Text style={styles.receiptDate}>{receipt.date}</Text>
+              <Image source={{ uri: receipt.image }} style={styles.thumbnailImage} />
+              <Text style={styles.receiptPreview} numberOfLines={3}>
+                {receipt.text}
+              </Text>
             </View>
-          )}
+          ))}
+        </ScrollView>
+        
+        <View style={styles.listButtonRow}>
+          <TouchableOpacity 
+            style={styles.buttonSecondary} 
+            onPress={() => setShowReceiptsList(false)}
+          >
+            <Text style={styles.buttonText}>← Indietro</Text>
+          </TouchableOpacity>
           
-          {extractedText !== '' && !isProcessing && (
-            <View style={styles.textContainer}>
-              <Text style={styles.textTitle}>📝 Testo Estratto:</Text>
-              <View style={styles.textBox}>
-                <Text style={styles.extractedText}>{extractedText}</Text>
-              </View>
-            </View>
-          )}
-          
-          <View style={styles.buttonRow}>
-            <TouchableOpacity style={styles.buttonSecondary} onPress={resetImage}>
-              <Text style={styles.buttonText}>🗑️ Cancella</Text>
-            </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.button} 
+            onPress={() => {
+              setShowReceiptsList(false);
+              takePicture();
+            }}
+          >
+            <Text style={styles.buttonText}>➕ Aggiungi</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    ) : !image ? (
+      // SCHERMATA: Bottone Scatta
+      <TouchableOpacity style={styles.button} onPress={takePicture}>
+        <Text style={styles.buttonText}>📸 Scatta Foto</Text>
+      </TouchableOpacity>
+    ) : (
+      // SCHERMATA: Foto Singola
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <Image source={{ uri: image }} style={styles.image} />
+        
+        {isProcessing && (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Sto leggendo lo scontrino...</Text>
+          </View>
+        )}
+        
+        {extractedText !== '' && !isProcessing && (
+          <View style={styles.textContainer}>
+            <Text style={styles.textTitle}>📝 Testo Estratto:</Text>
             
-            <TouchableOpacity style={styles.button} onPress={takePicture}>
-              <Text style={styles.buttonText}>📸 Nuova Foto</Text>
+            <TextInput
+              style={styles.textInput}
+              value={extractedText}
+              multiline
+              editable={false}
+              selectTextOnFocus={true}
+            />
+            
+            <TouchableOpacity style={styles.copyButton} onPress={copyToClipboard}>
+              <Text style={styles.buttonText}>📋 Copia Testo</Text>
             </TouchableOpacity>
           </View>
-        </ScrollView>
-      )}
-      
-      <StatusBar style="auto" />
-    </View>
-  );
+        )}
+        
+        <View style={styles.buttonRow}>
+          <TouchableOpacity style={styles.buttonSecondary} onPress={resetImage}>
+            <Text style={styles.buttonText}>🗑️ Cancella</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.button} onPress={takePicture}>
+            <Text style={styles.buttonText}>➕ Altro Scontrino</Text>
+          </TouchableOpacity>
+        </View>
+
+        {receipts.length > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>
+              📄 {receipts.length} scontrino{receipts.length > 1 ? 'i' : ''} salvat{receipts.length > 1 ? 'i' : 'o'}
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    )}
+    
+    <StatusBar style="auto" />
+  </SafeAreaView>
+);
 }
 
 const styles = StyleSheet.create({
@@ -208,6 +296,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: 20,
+    marginBottom: 20
   },
   loadingContainer: {
     alignItems: 'center',
@@ -240,4 +329,91 @@ const styles = StyleSheet.create({
     color: '#333',
     lineHeight: 20,
   },
+  textInput: {
+  backgroundColor: '#fff',
+  padding: 15,
+  borderRadius: 10,
+  borderWidth: 1,
+  borderColor: '#ddd',
+  fontSize: 14,
+  color: '#333',
+  lineHeight: 20,
+  minHeight: 150,
+  maxHeight: 300,
+  textAlignVertical: 'top',
+},
+copyButton: {
+  backgroundColor: '#34C759',
+  paddingHorizontal: 20,
+  paddingVertical: 12,
+  borderRadius: 10,
+  marginTop: 10,
+  alignSelf: 'center',
+},
+badge: {
+  backgroundColor: '#34C759',
+  paddingHorizontal: 20,
+  paddingVertical: 10,
+  borderRadius: 20,
+  marginTop: 15,
+  alignSelf: 'center',
+},
+badgeText: {
+  color: '#fff',
+  fontSize: 16,
+  fontWeight: 'bold',
+},
+viewAllButton: {
+  backgroundColor: '#5856D6',
+  paddingHorizontal: 25,
+  paddingVertical: 12,
+  borderRadius: 10,
+  marginBottom: 20,
+},
+viewAllButtonText: {
+  color: '#fff',
+  fontSize: 16,
+  fontWeight: '600',
+},
+listContainer: {
+  flex: 1,
+  width: '100%',
+},
+receiptCard: {
+  backgroundColor: '#fff',
+  padding: 15,
+  borderRadius: 10,
+  marginBottom: 15,
+  borderWidth: 1,
+  borderColor: '#ddd',
+},
+receiptNumber: {
+  fontSize: 18,
+  fontWeight: 'bold',
+  color: '#333',
+  marginBottom: 5,
+},
+receiptDate: {
+  fontSize: 14,
+  color: '#666',
+  marginBottom: 10,
+},
+thumbnailImage: {
+  width: '100%',
+  height: 150,
+  borderRadius: 8,
+  marginBottom: 10,
+},
+receiptPreview: {
+  fontSize: 14,
+  color: '#666',
+  lineHeight: 20,
+},
+listButtonRow: {
+  flexDirection: 'row',
+  justifyContent: 'space-around',
+  paddingVertical: 20,
+  paddingBottom: 25,
+  backgroundColor: '#f5f5f5',
+},
 });
