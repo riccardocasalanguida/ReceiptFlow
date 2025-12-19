@@ -1,17 +1,25 @@
-// Funzioni per analizzare e processare gli scontrini
-
 /**
- * Estrae il nome del cliente dalla prima riga dello scontrino
+ * Estrae il nome del cliente dalle prime 2 lettere della prima riga
  * @param {string} text - Testo dello scontrino
- * @returns {string} - Nome del cliente (lowercase)
+ * @returns {string} - Codice cliente (2 lettere, uppercase)
  */
 export function extractClientName(text) {
   // Prende la prima riga non vuota
   const lines = text.split('\n').filter(line => line.trim() !== '');
-  if (lines.length === 0) return 'sconosciuto';
+  if (lines.length === 0) return 'XX';
   
-  const firstLine = lines[0].trim().toLowerCase();
-  return firstLine || 'sconosciuto';
+  const firstLine = lines[0].trim();
+  
+  // Estrae solo le prime 2 lettere (ignora numeri e caratteri speciali)
+  const lettersOnly = firstLine.replace(/[^a-zA-Z]/g, '');
+  
+  if (lettersOnly.length >= 2) {
+    return lettersOnly.substring(0, 2).toUpperCase();
+  } else if (lettersOnly.length === 1) {
+    return lettersOnly.toUpperCase() + 'X';
+  }
+  
+  return 'XX';
 }
 
 /**
@@ -21,46 +29,56 @@ export function extractClientName(text) {
  */
 export function extractTotal(text) {
   // Cerca "TOTALE COMPLESSIVO" seguito da un numero
-  const totalRegex = /TOTALE\s+COMPLESSIVO\s+(\d+[.,]\d+)/i;
+  // Supporta vari formati: "100.88", "100,88", "100. 88", ecc.
+  const totalRegex = /TOTALE\s+COMPLESSIVO\s+(\d+[.,\s]*\d+)/i;
   const match = text.match(totalRegex);
   
   if (match) {
-    // Converte "100,88" o "100.88" in 100.88
-    const amount = match[1].replace(',', '.');
-    return parseFloat(amount);
+    // Rimuove spazi e converte virgola in punto
+    const amount = match[1].replace(/\s/g, '').replace(',', '.');
+    const parsed = parseFloat(amount);
+    
+    // Verifica che sia un numero valido
+    if (!isNaN(parsed)) {
+      return parsed;
+    }
   }
   
+  console.warn('Totale non trovato nello scontrino');
   return 0;
 }
 
 /**
- * Estrae i numeri dei documenti (dopo "DOC." ma non "DOC.GEST.")
+ * Estrae TUTTI i numeri dei documenti (dopo "DOC." ma non "DOC.GEST.")
  * @param {string} text - Testo dello scontrino
- * @returns {string} - Numero documento senza trattino (es: "17500001")
+ * @returns {Array} - Array di numeri documento senza trattino
  */
-export function extractDocNumber(text) {
-  // Cerca "DOC." seguito da numero-numero (ma NON "DOC.GEST.")
-  const docRegex = /DOC\.(\d+-\d+)/g;
-  const gestRegex = /DOC\.GEST/i;
+export function extractDocNumbers(text) {
+  const numbers = [];
   
-  const matches = [];
-  let match;
+  // Split il testo in righe per analizzarle una per una
+  const lines = text.split('\n');
   
-  // Trova tutti i match di "DOC.XXXX-YYYY"
-  while ((match = docRegex.exec(text)) !== null) {
-    const fullMatch = match[0];
-    const docNumber = match[1];
+  lines.forEach(line => {
+    // Salta righe con "DOC.GEST"
+    if (line.includes('DOC.GEST')) return;
     
-    // Salta se è "DOC.GEST."
-    const beforeMatch = text.substring(Math.max(0, match.index - 5), match.index);
-    if (beforeMatch.includes('GEST')) continue;
+    // Cerca pattern "DOC.XXXX-YYYY" nella riga
+    const docRegex = /DOC\.(\d+)-(\d+)/gi;
+    let match;
     
-    // Rimuove il trattino: "1750-0001" -> "17500001"
-    const cleanNumber = docNumber.replace('-', '');
-    matches.push(cleanNumber);
-  }
+    while ((match = docRegex.exec(line)) !== null) {
+      const number1 = match[1];
+      const number2 = match[2];
+      const combined = number1 + number2;
+      numbers.push(combined);
+    }
+  });
   
-  return matches[0] || 'N/D';
+  // Rimuove duplicati
+  const unique = [...new Set(numbers)];
+  
+  return unique;
 }
 
 /**
@@ -71,12 +89,17 @@ export function extractDocNumber(text) {
 export function groupReceiptsByClient(receipts) {
   const grouped = {};
   
-  receipts.forEach(receipt => {
-    const clientName = extractClientName(receipt.text);
+  receipts.forEach((receipt, index) => {
+    const clientCode = extractClientName(receipt.text);
     
-    if (!grouped[clientName]) {
-      grouped[clientName] = {
-        clientName: clientName,
+    console.log(`Scontrino #${index + 1}:`);
+    console.log(`  - Cliente: ${clientCode}`);
+    console.log(`  - Totale: ${extractTotal(receipt.text)}`);
+    console.log(`  - Doc: ${extractDocNumbers(receipt.text)}`);
+    
+    if (!grouped[clientCode]) {
+      grouped[clientCode] = {
+        clientCode: clientCode,
         receipts: [],
         totals: [],
         docNumbers: [],
@@ -84,11 +107,11 @@ export function groupReceiptsByClient(receipts) {
     }
     
     const total = extractTotal(receipt.text);
-    const docNumber = extractDocNumber(receipt.text);
+    const docNums = extractDocNumbers(receipt.text);
     
-    grouped[clientName].receipts.push(receipt);
-    grouped[clientName].totals.push(total);
-    grouped[clientName].docNumbers.push(docNumber);
+    grouped[clientCode].receipts.push(receipt);
+    grouped[clientCode].totals.push(total);
+    grouped[clientCode].docNumbers.push(...docNums); // Spread per aggiungere tutti i numeri
   });
   
   return grouped;
@@ -102,20 +125,26 @@ export function groupReceiptsByClient(receipts) {
 export function calculateClientStats(groupedData) {
   const stats = {};
   
-  Object.keys(groupedData).forEach(clientName => {
-    const clientData = groupedData[clientName];
+  Object.keys(groupedData).forEach(clientCode => {
+    const clientData = groupedData[clientCode];
     
-    // Somma tutti i totali
-    const totalSum = clientData.totals.reduce((sum, val) => sum + val, 0);
+    // Somma TUTTI i totali
+    const totalSum = clientData.totals.reduce((sum, val) => {
+      console.log(`  Addendo: ${val}, Somma parziale: ${sum + val}`);
+      return sum + val;
+    }, 0);
     
-    // Lista numeri documenti
-    const docNumbersList = clientData.docNumbers.join(', ');
+    console.log(`Cliente ${clientCode} - Totale finale: ${totalSum}`);
     
-    stats[clientName] = {
-      clientName: clientName.toUpperCase(),
+    // Lista numeri documenti (rimuove duplicati)
+    const uniqueDocs = [...new Set(clientData.docNumbers)];
+    const docNumbersList = uniqueDocs.join(', ');
+    
+    stats[clientCode] = {
+      clientCode: clientCode,
       receiptCount: clientData.receipts.length,
       totalSum: totalSum.toFixed(2),
-      docNumbers: docNumbersList,
+      docNumbers: docNumbersList || 'N/D',
       receipts: clientData.receipts,
     };
   });
@@ -133,10 +162,13 @@ export function generateClientReport(stats) {
   report += '       REPORT CLIENTI\n';
   report += '═══════════════════════════════════\n\n';
   
-  Object.keys(stats).forEach(clientName => {
-    const clientStats = stats[clientName];
+  // Ordina i clienti alfabeticamente
+  const sortedClients = Object.keys(stats).sort();
+  
+  sortedClients.forEach(clientCode => {
+    const clientStats = stats[clientCode];
     
-    report += `📋 CLIENTE: ${clientStats.clientName}\n`;
+    report += `📋 CLIENTE: ${clientStats.clientCode}\n`;
     report += `───────────────────────────────────\n`;
     report += `• N° Scontrini: ${clientStats.receiptCount}\n`;
     report += `• Totale: €${clientStats.totalSum}\n`;
@@ -151,7 +183,12 @@ export function generateClientReport(stats) {
     .reduce((sum, client) => sum + parseFloat(client.totalSum), 0)
     .toFixed(2);
   
-  report += `💰 TOTALE GENERALE: €${grandTotal}\n`;
+  const totalReceipts = Object.values(stats)
+    .reduce((sum, client) => sum + client.receiptCount, 0);
+  
+  report += `📊 TOTALI GENERALI:\n`;
+  report += `• Scontrini: ${totalReceipts}\n`;
+  report += `• Importo: €${grandTotal}\n`;
   report += '═══════════════════════════════════\n';
   
   return report;
