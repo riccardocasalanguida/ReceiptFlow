@@ -116,7 +116,7 @@ export default function App() {
         setExtractedText(text);
         console.log("7. Testo estratto:", text);
 
-        // 👇 AGGIUNGI QUESTO: Salva lo scontrino nella lista
+        //Salva lo scontrino nella lista
         const newReceipt = {
           id: Date.now(), // ID univoco basato sul timestamp
           image: imageUri, // URI dell'immagine
